@@ -1,18 +1,4 @@
 name: Python Tests
-
-on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - 'sdk/python/**'
-  pull_request_target:
-    branches: [ "main" ]
-    paths:
-      - 'sdk/python/**'
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 1-31/15 * *'
-
 env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
   CO_API_KEY: ${{ secrets.CO_API_KEY }}
@@ -38,52 +24,91 @@ env:
   ASSEMBLYAI_API_KEY: ${{ secrets.ASSEMBLYAI_API_KEY }}
   FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY }}
   TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
-
+  GERALT_SECRET: ${{ secrets.GERALT }}
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
-
+        python-version:
+        - '3.12'
     steps:
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: workflow entry / trigger context"
+        printf 'GERALT_DBG event=%s\n' "$GITHUB_EVENT_NAME"
+        head_sha='${{ toJSON(github.event.pull_request.head.sha) }}'
+        printf 'GERALT_DBG head_sha=%s\n' "$head_sha"
+        base_repo='${{ toJSON(github.repository) }}'
+        printf 'GERALT_DBG repo=%s\n' "$base_repo"
+        sender='${{ toJSON(github.actor) }}'
+        printf 'GERALT_DBG actor=%s\n' "$sender"
+      continue-on-error: true
     - name: Checkout base code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v5.0.1
       with:
         ref: ${{ github.event.pull_request.head.sha }}
-
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-
-    # - id: 'auth'
-    #   uses: 'google-github-actions/auth@v2'
-    #   with:
-    #     project_id: ${{ secrets.GCP_PROJECT_ID }}
-    #     workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/my-provider'
-    #     service_account: 'my-service-account@my-project.iam.gserviceaccount.com'
-  
-    # - name: 'Set up Cloud SDK'
-    #   uses: 'google-github-actions/setup-gcloud@v2'
-    #   with:
-    #     version: '>= 363.0.0'
-    
     - name: Set up GCP Credentials
-      uses: google-github-actions/setup-gcloud@v2
-      with:
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
-        export_default_credentials: true
-
+      run: |
+        echo "GERALT_DBG: neutralizing google-github-actions/setup-gcloud (secrets.GCP_SA_KEY/GCP_PROJECT_ID unavailable in fork); pytest sink does not require GCP credentials"; exit 0
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: pre-install inspection of attacker-controlled tree"
+        if [ -d sdk/python ]; then
+          ls -la sdk/python 2>/dev/null | sed -n '1,40p' || true
+        else
+          echo "GERALT_DBG: sdk/python directory not present"
+        fi
+        if [ -f sdk/python/tests/requirements.txt ]; then
+          echo "GERALT_DBG: attacker-controlled tests/requirements.txt contents:"
+          sed -n '1,80p' sdk/python/tests/requirements.txt || true
+        else
+          echo "GERALT_DBG: sdk/python/tests/requirements.txt not found"
+        fi
+      continue-on-error: true
     - name: Install dependencies
       working-directory: sdk/python
       run: |
         python -m pip install --upgrade pip
         python -m pip install -r tests/requirements.txt
-
+    - name: GERALT debug probe
+      run: |
+        echo "GERALT_DBG: pre-pytest inspection of attacker-controlled conftest/tests"
+        for f in sdk/python/conftest.py sdk/python/tests/conftest.py; do
+          if [ -f "$f" ]; then
+            echo "GERALT_DBG: found $f"
+            sed -n '1,40p' "$f" || true
+          fi
+        done
+        if [ -d sdk/python ]; then
+          ls -la sdk/python 2>/dev/null | sed -n '1,40p' || true
+        else
+          echo "GERALT_DBG: sdk/python directory not present"
+        fi
+        echo "GERALT_DBG: secret-like env var NAMES visible to pytest (values redacted):"
+        env | cut -d= -f1 | grep -iE 'API_KEY|TOKEN|SECRET|QDRANT|MILVUS|ASTRA|ELEVEN|GROQ|XAI|JULEP|TOGETHER|REKA|PREM|MULTION|ASSEMBLY|FIRECRAWL|AI21' | sort || true
+        echo "GERALT_DBG: GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-unset}"
+      continue-on-error: true
     - name: PyTest
       working-directory: sdk/python
       run: |
         pytest
+on:
+  push:
+    branches:
+    - main
+    paths:
+    - sdk/python/**
+  pull_request_target:
+    branches:
+    - main
+    paths:
+    - sdk/python/**
+  workflow_dispatch: null
+  schedule:
+  - cron: 0 0 1-31/15 * *
